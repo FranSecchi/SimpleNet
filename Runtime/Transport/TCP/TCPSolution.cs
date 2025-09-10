@@ -521,7 +521,41 @@ namespace SimpleNet.Transport.TCP
         {
             if (serverInfo != null)
             {
-                _serverInfo = serverInfo;
+                if (_serverInfo == null)
+                {
+                    _serverInfo = serverInfo;
+                }
+                else
+                {
+                    var merged = new ServerInfo
+                    {
+                        Address = !string.IsNullOrEmpty(serverInfo.Address) ? serverInfo.Address : _serverInfo.Address,
+                        Port = serverInfo.Port > 0 ? serverInfo.Port : _serverInfo.Port,
+                        ServerName = !string.IsNullOrEmpty(serverInfo.ServerName) ? serverInfo.ServerName : _serverInfo.ServerName,
+                        CurrentPlayers = serverInfo.CurrentPlayers != 0 ? serverInfo.CurrentPlayers : _serverInfo.CurrentPlayers,
+                        MaxPlayers = serverInfo.MaxPlayers != 0 ? serverInfo.MaxPlayers : _serverInfo.MaxPlayers,
+                        GameMode = !string.IsNullOrEmpty(serverInfo.GameMode) ? serverInfo.GameMode : _serverInfo.GameMode,
+                        Ping = serverInfo.Ping != 0 ? serverInfo.Ping : _serverInfo.Ping,
+                        CustomData = new Dictionary<string, string>()
+                    };
+
+                    if (_serverInfo.CustomData != null)
+                    {
+                        foreach (var kvp in _serverInfo.CustomData)
+                        {
+                            merged.CustomData[kvp.Key] = kvp.Value;
+                        }
+                    }
+                    if (serverInfo.CustomData != null)
+                    {
+                        foreach (var kvp in serverInfo.CustomData)
+                        {
+                            merged.CustomData[kvp.Key] = kvp.Value;
+                        }
+                    }
+
+                    _serverInfo = merged;
+                }
                 if (_isServer)
                 {
                     _lanBroadcaster?.SetServerInfo(_serverInfo);
