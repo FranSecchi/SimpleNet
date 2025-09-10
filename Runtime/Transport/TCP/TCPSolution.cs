@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using SimpleNet.Transport.UDP;
 using SimpleNet.Utilities;
 using static SimpleNet.Transport.ITransport;
 
@@ -13,7 +14,7 @@ namespace SimpleNet.Transport.TCP
     /// <summary>
     /// High-performance TCP transport implementation using native .NET sockets
     /// </summary>
-    public class TCPTransport : ITransport
+    public class TCPSolution : ITransport
     {
         private Socket _listenerSocket;
         private Socket _clientSocket;
@@ -25,7 +26,8 @@ namespace SimpleNet.Transport.TCP
         private bool _isServer;
         private bool _isRunning;
         private int _port;
-        private int _nextClientId = 1;
+        private int _nextClientId = -1;
+        private int _assignedClientId = -1; // client-side: server-assigned id after handshake
         private ServerInfo _serverInfo;
         private Thread _pollingThread;
         private CancellationTokenSource _cancellationTokenSource;
@@ -36,7 +38,7 @@ namespace SimpleNet.Transport.TCP
         private List<ServerInfo> _lanServers;
         private int _bandwidthLimit;
 
-        public TCPTransport()
+        public TCPSolution()
         {
             _lanServers = new List<ServerInfo>();
             _cancellationTokenSource = new CancellationTokenSource();
@@ -88,6 +90,7 @@ namespace SimpleNet.Transport.TCP
                 _listenerSocket.Listen(100); // Allow up to 100 pending connections
                 
                 DebugQueue.AddMessage($"[TCP SERVER] Listening on port {_port}");
+                _nextClientId = -1; // ensure first accepted client gets id 0
                 _isRunning = true;
                 
                 // Start accepting connections asynchronously
@@ -122,6 +125,17 @@ namespace SimpleNet.Transport.TCP
                     
                     DebugQueue.AddMessage($"[TCP SERVER] Client {clientId} connected from {clientSocket.RemoteEndPoint}");
                     
+                    // Send assigned client id to the client as 4-byte little-endian int
+                    try
+                    {
+                        var idBytes = BitConverter.GetBytes(clientId);
+                        clientSocket.Send(idBytes);
+                    }
+                    catch (Exception ex)
+                    {
+                        DebugQueue.AddMessage($"[TCP SERVER] Failed to send client id {clientId}: {ex.Message}", DebugQueue.MessageType.Warning);
+                    }
+
                     // Update connection info
                     UpdateConnectionInfo(clientId, ConnectionState.Connected);
                     TriggerOnClientConnected(clientId);
@@ -150,7 +164,7 @@ namespace SimpleNet.Transport.TCP
             
             try
             {
-                while (_isRunning && clientSocket.Connected)
+                while (_isRunning && clientSocket != null && clientSocket.Connected && !_cancellationTokenSource.IsCancellationRequested)
                 {
                     var bytesReceived = await clientSocket.ReceiveAsync(buffer, SocketFlags.None);
                     
@@ -175,9 +189,24 @@ namespace SimpleNet.Transport.TCP
                     DebugQueue.AddMessage($"[TCP SERVER] Received {bytesReceived} bytes from client {clientId}");
                 }
             }
+            catch (ObjectDisposedException)
+            {
+                // Expected during shutdown/stop; suppress noisy errors
+            }
+            catch (SocketException se)
+            {
+                // Ignore expected socket errors that occur during shutdown
+                if (_isRunning && !_cancellationTokenSource.IsCancellationRequested)
+                {
+                    DebugQueue.AddMessage($"[TCP SERVER] Socket error handling client {clientId}: {se.Message}", DebugQueue.MessageType.Error);
+                }
+            }
             catch (Exception ex)
             {
-                DebugQueue.AddMessage($"[TCP SERVER] Error handling client {clientId}: {ex.Message}", DebugQueue.MessageType.Error);
+                if (_isRunning && !_cancellationTokenSource.IsCancellationRequested)
+                {
+                    DebugQueue.AddMessage($"[TCP SERVER] Error handling client {clientId}: {ex.Message}", DebugQueue.MessageType.Error);
+                }
             }
             finally
             {
@@ -215,16 +244,13 @@ namespace SimpleNet.Transport.TCP
                 
                 DebugQueue.AddMessage($"[TCP CLIENT] Connected to {address}:{_port}");
                 
-                UpdateConnectionInfo(0, ConnectionState.Connected);
-                TriggerOnClientConnected(0);
-                
                 // Start receiving data from server
                 _ = HandleServerDataAsync();
             }
             catch (Exception ex)
             {
                 DebugQueue.AddMessage($"[TCP CLIENT] Failed to connect: {ex.Message}", DebugQueue.MessageType.Error);
-                UpdateConnectionInfo(0, ConnectionState.Disconnected);
+                UpdateConnectionInfo(_assignedClientId == -1 ? 0 : _assignedClientId, ConnectionState.Disconnected);
             }
         }
 
@@ -234,7 +260,7 @@ namespace SimpleNet.Transport.TCP
             
             try
             {
-                while (_isRunning && _clientSocket?.Connected == true)
+                while (_isRunning && _clientSocket?.Connected == true && !_cancellationTokenSource.IsCancellationRequested)
                 {
                     var bytesReceived = await _clientSocket.ReceiveAsync(buffer, SocketFlags.None);
                     
@@ -244,29 +270,64 @@ namespace SimpleNet.Transport.TCP
                         break;
                     }
                     
-                    // Copy received data
+                    // If this is the first packet, treat it as the assigned client id handshake
+                    if (_assignedClientId == -1 && bytesReceived >= 4)
+                    {
+                        _assignedClientId = BitConverter.ToInt32(buffer, 0);
+                        UpdateConnectionInfo(_assignedClientId, ConnectionState.Connected);
+
+                        // If there is extra payload beyond the 4-byte id, enqueue it
+                        var remaining = bytesReceived - 4;
+                        if (remaining > 0)
+                        {
+                            var dataAfterId = new byte[remaining];
+                            Array.Copy(buffer, 4, dataAfterId, 0, remaining);
+                            _packetQueue.Enqueue(dataAfterId);
+                            if (_connectionInfo.TryGetValue(_assignedClientId, out var infoAfterId))
+                            {
+                                infoAfterId.BytesReceived += remaining;
+                            }
+                        }
+                        continue;
+                    }
+
+                    // Copy received data (normal payload)
                     var data = new byte[bytesReceived];
                     Array.Copy(buffer, data, bytesReceived);
                     _packetQueue.Enqueue(data);
                     
                     // Update connection info
-                    if (_connectionInfo.TryGetValue(0, out var info))
+                    if (_connectionInfo.TryGetValue(_assignedClientId == -1 ? 0 : _assignedClientId, out var info))
                     {
                         info.BytesReceived += bytesReceived;
                     }
                     
-                    TriggerOnDataReceived(0);
+                    TriggerOnDataReceived(_assignedClientId == -1 ? 0 : _assignedClientId);
                     DebugQueue.AddMessage($"[TCP CLIENT] Received {bytesReceived} bytes from server");
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                // Expected during shutdown/stop; suppress
+            }
+            catch (SocketException se)
+            {
+                if (_isRunning && !_cancellationTokenSource.IsCancellationRequested)
+                {
+                    DebugQueue.AddMessage($"[TCP CLIENT] Socket error receiving data: {se.Message}", DebugQueue.MessageType.Error);
                 }
             }
             catch (Exception ex)
             {
-                DebugQueue.AddMessage($"[TCP CLIENT] Error receiving data: {ex.Message}", DebugQueue.MessageType.Error);
+                if (_isRunning && !_cancellationTokenSource.IsCancellationRequested)
+                {
+                    DebugQueue.AddMessage($"[TCP CLIENT] Error receiving data: {ex.Message}", DebugQueue.MessageType.Error);
+                }
             }
             finally
             {
-                UpdateConnectionInfo(0, ConnectionState.Disconnected);
-                TriggerOnClientDisconnected(0);
+                var idForDisconnect = _assignedClientId == -1 ? 0 : _assignedClientId;
+                UpdateConnectionInfo(idForDisconnect, ConnectionState.Disconnected);
                 DebugQueue.AddMessage("[TCP CLIENT] Disconnected from server");
             }
         }
@@ -374,7 +435,7 @@ namespace SimpleNet.Transport.TCP
                     {
                         _clientSocket.Send(data);
                         
-                        if (_connectionInfo.TryGetValue(0, out var info))
+                        if (_connectionInfo.TryGetValue(_assignedClientId == -1 ? 0 : _assignedClientId, out var info))
                         {
                             info.BytesSent += data.Length;
                         }
@@ -429,7 +490,7 @@ namespace SimpleNet.Transport.TCP
             {
                 return packet;
             }
-            return null;
+            return Array.Empty<byte>();
         }
 
         public List<ServerInfo> GetDiscoveredServers()

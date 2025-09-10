@@ -3,18 +3,18 @@ using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
 
-namespace SimpleNet.Transport.Tests
+namespace SimpleNet.Transport.Tests.TCP
 {
-    public class UDPClientTest : TransportTestBase
+    public class ClientTest : TransportTestBase
     {
         private const string TestMessage = "Hello, Server!";
         private bool _connected = false;
         
         protected override IEnumerator SetUp()
         {
-            StartHost();
+            StartHost(true);
             yield return new WaitForSeconds(0.2f);
-            StartClient();
+            StartClient(true);
             yield return new WaitForSeconds(0.2f);
         }
 

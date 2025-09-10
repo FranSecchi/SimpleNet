@@ -1,5 +1,6 @@
 using UnityEngine.TestTools;
 using System.Collections;
+using SimpleNet.Transport.TCP;
 using SimpleNet.Transport.UDP;
 
 namespace SimpleNet.Transport.Tests
@@ -31,16 +32,16 @@ namespace SimpleNet.Transport.Tests
         protected abstract IEnumerator Teardown();
         protected virtual void OnClientConnected(int id){}
         protected virtual void OnClientDisconnected(int id){}
-        protected void StartClient()
+        protected void StartClient(bool tcp = false)
         {
-            _client = new UDPSolution();
+            _client = tcp ? new TCPSolution() : new UDPSolution();
             _client.Setup(Port, false);
             _client.Start();
         }
 
-        protected void StartHost()
+        protected void StartHost(bool tcp = false)
         {
-            _server = new UDPSolution();
+            _server = tcp ? new TCPSolution() : new UDPSolution();
             _server.Setup(Port, true);
             _server.Start();
             ITransport.OnClientConnected += OnClientConnected;

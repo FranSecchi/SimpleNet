@@ -156,7 +156,7 @@ namespace SimpleNet.Editor
                 DebugQueue.ClearMessages();
             }
 
-            messageScrollPosition = EditorGUILayout.BeginScrollView(messageScrollPosition, GUILayout.Height(200));
+            messageScrollPosition = EditorGUILayout.BeginScrollView(messageScrollPosition, GUILayout.Height(500));
 
             var messages = DebugQueue.GetMessages();
             var filteredMessages = messages.Where(m => 
@@ -189,7 +189,11 @@ namespace SimpleNet.Editor
                         break;
                 }
 
-                EditorGUILayout.LabelField($"[{message.Timestamp:F2}s] {message.Message}");
+                var content = new GUIContent($"[{message.Timestamp:F2}s] {message.Message}");
+                var style = EditorStyles.wordWrappedLabel;
+                float viewWidth = EditorGUIUtility.currentViewWidth - 50f;
+                float height = style.CalcHeight(content, viewWidth);
+                EditorGUILayout.LabelField(content, style, GUILayout.Height(height));
                 GUI.color = originalColor;
             }
 

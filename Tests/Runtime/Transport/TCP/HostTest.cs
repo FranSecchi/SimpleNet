@@ -1,13 +1,15 @@
 using System.Collections;
 using System.Collections.Generic;
 using NUnit.Framework;
+using SimpleNet.Transport.TCP;
 using SimpleNet.Transport.UDP;
+using SimpleNet.Utilities;
 using UnityEngine;
 using UnityEngine.TestTools;
 
-namespace SimpleNet.Transport.Tests
+namespace SimpleNet.Transport.Tests.TCP
 {
-    public class UDPHostTest : TransportTestBase
+    public class HostTest : TransportTestBase
     {
         private List<int> _connectedClients;
         
@@ -16,7 +18,7 @@ namespace SimpleNet.Transport.Tests
         
         protected override IEnumerator SetUp()
         {
-            StartHost();
+            StartHost(true);
             _connectedClients = new List<int>();
             yield return new WaitForSeconds(0.2f);
         }
@@ -39,7 +41,7 @@ namespace SimpleNet.Transport.Tests
             List<ITransport> clients = new List<ITransport>();
             for (int i = 0; i < 5; i++)
             {
-                ITransport client = new UDPSolution();
+                ITransport client = new TCPSolution();
                 client.Setup(Port, false);
                 client.Start();
                 client.Connect("localhost");
@@ -61,7 +63,7 @@ namespace SimpleNet.Transport.Tests
             List<ITransport> clients = new List<ITransport>();
             for (int i = 0; i < 5; i++)
             {
-                ITransport client = new UDPSolution();
+                ITransport client = new TCPSolution();
                 client.Setup(Port, false);
                 client.Start();
                 client.Connect("localhost");
@@ -88,7 +90,7 @@ namespace SimpleNet.Transport.Tests
             List<ITransport> clients = new List<ITransport>();
             for (int i = 0; i < 5; i++)
             {
-                ITransport client = new UDPSolution();
+                ITransport client = new TCPSolution();
                 client.Setup(Port, false);
                 client.Start();
                 client.Connect("localhost");
@@ -120,7 +122,7 @@ namespace SimpleNet.Transport.Tests
             List<ITransport> clients = new List<ITransport>();
             for (int i = 0; i < 5; i++)
             {
-                ITransport client = new UDPSolution();
+                ITransport client = new TCPSolution();
                 client.Setup(Port, false);
                 client.Start();
                 client.Connect("localhost");
@@ -130,7 +132,7 @@ namespace SimpleNet.Transport.Tests
             _server.Kick(2);
             yield return new WaitForSeconds(2f);
             
-            Assert.IsTrue(_connectedClients.Count == 4, "There should be 4 clients.");
+            Assert.IsTrue(_connectedClients.Count == 4, "There should be 4 clients and was " + _connectedClients.Count + ".");
             foreach (var client in clients)
             {
                 client.Stop();
@@ -143,6 +145,7 @@ namespace SimpleNet.Transport.Tests
             {
                 return;
             }
+            DebugQueue.AddMessage($"Added {id}");
             _connectedClients.Add(id);
         }
         protected override void OnClientDisconnected(int id)
@@ -151,6 +154,7 @@ namespace SimpleNet.Transport.Tests
             {
                 return;
             }
+            DebugQueue.AddMessage($"Removed {id}");
             _connectedClients.Remove(id);
         }
     }

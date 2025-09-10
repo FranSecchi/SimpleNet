@@ -1,13 +1,13 @@
 using System.Collections;
 using System.Collections.Generic;
 using NUnit.Framework;
-using SimpleNet.Transport.UDP;
+using SimpleNet.Transport.TCP;
 using UnityEngine;
 using UnityEngine.TestTools;
 
-namespace SimpleNet.Transport.Tests
+namespace SimpleNet.Transport.Tests.TCP
 {
-    public class UDPLanTest : TransportTestBase
+    public class LanTest : TransportTestBase
     {
         private const int Port = 7777;
         private List<ITransport> _servers;
@@ -44,7 +44,7 @@ namespace SimpleNet.Transport.Tests
         {
             for (int i = 0; i < 3; i++)
             {
-                ITransport server = new UDPSolution();
+                ITransport server = new TCPSolution();
                 server.Setup(Port + i, true);
                 server.Start();
                 server.SetServerInfo(new ServerInfo(){ServerName = "Name"});
