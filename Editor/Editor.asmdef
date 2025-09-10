@@ -1,0 +1,18 @@
+{
+    "name": "NetPackage.Editor",
+    "rootNamespace": "NetPackage.Editor",
+    "references": [
+        "GUID:2624d5b30ae68cb458c788b775d3ff95"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

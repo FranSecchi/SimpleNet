@@ -4,26 +4,32 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using LiteNetLib;
-using UnityEngine;
-using static Transport.NetPackage.Runtime.Transport.ITransport;
+using SimpleNet.Utilities;
+using static SimpleNet.Transport.ITransport;
 
-namespace Transport.NetPackage.Runtime.Transport.UDP
+namespace SimpleNet.Transport.UDP
 {
-    public abstract class APeer : INetEventListener
+    internal abstract class APeer : INetEventListener
     {
         protected readonly NetManager Peer;
+        protected ServerInfo _serverInfo;
         protected readonly int Port;
         private readonly ConcurrentQueue<byte[]> _packetQueue = new ConcurrentQueue<byte[]>();
-        private Dictionary<int, ConnectionInfo> _connectionInfo;
+        protected Dictionary<int, ConnectionInfo> _connectionInfo;
         protected int _bandwidthLimit;
 
         protected APeer(int port)
         {
             Peer = new NetManager(this);
+            _serverInfo = new ServerInfo
+            {
+                CustomData = new Dictionary<string, string>()
+            };
             _connectionInfo = new Dictionary<int, ConnectionInfo>();
             Port = port;
         }
 
+        public ServerInfo ServerInfo { get; set; }
         public bool UseDebug { get; set; }
         public Dictionary<int, ConnectionInfo> ConnectionInfo  => _connectionInfo;
         public int MaxPlayers { get; set; }
@@ -47,7 +53,8 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
 
         public void Disconnect()
         {
-            if(UseDebug) Debug.Log($"All Peers disconnected");
+            DebugQueue.AddMessage($"All Peers disconnected");
+
             Peer.DisconnectAll();
         }
 
@@ -55,7 +62,10 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
         {
             if (!Peer.TryGetPeerById(id, out NetPeer peer)) return;
             peer.Send(data, DeliveryMethod.Sequenced);
-            if(UseDebug) Debug.Log($"[SERVER] Sent message to client {id}");
+            if(!_connectionInfo.ContainsKey(id))
+                UpdateConnectionInfo(id, ConnectionState.Connected);
+            _connectionInfo[id].BytesSent += data.Length;
+            DebugQueue.AddMessage($"[SERVER] Sent message to client {id}");
         }
 
         public byte[] Receive()
@@ -70,8 +80,10 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
 
         public void OnNetworkReceive(NetPeer peer, NetPacketReader reader, byte channelNumber, DeliveryMethod deliveryMethod)
         {
-            if(UseDebug) Debug.Log("Data received from peer " + peer.Address + "|" + peer.Port + ":" + peer.Id);
-            _packetQueue.Enqueue(reader.GetRemainingBytes());
+            DebugQueue.AddMessage("Data received from peer " + peer.Address + "|" + peer.Port + ":" + peer.Id);
+            byte[] data = reader.GetRemainingBytes();
+            _packetQueue.Enqueue(data);
+            _connectionInfo[peer.Id].BytesReceived += data.Length;
             TriggerOnDataReceived(peer.Id);
             reader.Recycle();
         }
@@ -82,23 +94,22 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
         
         public void OnNetworkLatencyUpdate(NetPeer peer, int latency)
         {
-            if(UseDebug) Debug.Log($"Latency update for peer {peer.Id}: {latency}ms"); 
             UpdateConnectionInfo(peer.Id, ConnectionState.Connected, latency);
         }
 
         public void OnNetworkError(IPEndPoint endPoint, SocketError socketError)
         {
-            if(UseDebug) Debug.LogError($"Network error: {socketError} from {endPoint}");
-                // Find the client ID associated with this endpoint
-                foreach (NetPeer peer in Peer.ConnectedPeerList)
+            if(UseDebug)             
+                DebugQueue.AddMessage($"Network error: {socketError} from {endPoint}", DebugQueue.MessageType.Error);
+            // Find the client ID associated with this endpoint
+            foreach (NetPeer peer in Peer.ConnectedPeerList)
+            {
+                if (peer.Address.Equals(endPoint.Address))
                 {
-                    if (peer.Address.Equals(endPoint.Address))
-                    {
-                        UpdateConnectionInfo(peer.Id, ConnectionState.Disconnected);
-                        break;
-                    }
+                    UpdateConnectionInfo(peer.Id, ConnectionState.Disconnected);
+                    break;
                 }
-            
+            }
         }
 
         protected void UpdateConnectionInfo(int clientId, ConnectionState state, int ping = 0, float packetLoss = 0)
@@ -107,6 +118,7 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
             {
                 _connectionInfo[clientId] = new ConnectionInfo
                 {
+                    Id = clientId,
                     State = state,
                     ConnectedSince = DateTime.Now,
                     BytesReceived = 0,
@@ -132,6 +144,7 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
 
         public void Stop()
         {
+            _connectionInfo.Clear();
             Peer.DisconnectAll();
             Peer.Stop();
         }

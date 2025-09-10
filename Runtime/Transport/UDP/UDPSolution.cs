@@ -1,55 +1,48 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Net.Sockets;
 using System.Threading;
-using UnityEngine;
-using static Transport.NetPackage.Runtime.Transport.ITransport;
+using SimpleNet.Utilities;
+using static SimpleNet.Transport.ITransport;
 
-namespace Transport.NetPackage.Runtime.Transport.UDP
+namespace SimpleNet.Transport.UDP
 {
-    public class UDPSolution : ITransport
+    internal class UDPSolution : ITransport
     {
         private APeer _aPeer;
         private Thread _pollingThread;
         private bool _isRunning;
         
         public bool IsHost;
-        private bool _useDebug;
         private LANDiscovery _lanDiscovery;
         private LANBroadcast _lanBroadcaster;
         private List<ServerInfo> _lanServers;
-        private ServerInfo _serverInfo;
         private int _bandwidthLimit;
 
         public UDPSolution()
         {
             _lanServers = new List<ServerInfo>();
-            _serverInfo = new ServerInfo
-            {
-                CustomData = new Dictionary<string, string>()
-            };
         }
 
-        public void Setup(int port, bool isServer, int maxPlayers = 10, bool useDebug = false)
+        public void Setup(int port, bool isServer, ServerInfo serverInfo = null)
         {
             if(_isRunning) Disconnect();
             _aPeer = isServer ? new AHost(port) : new AClient(port);
-            _aPeer.MaxPlayers = maxPlayers;
-            _aPeer.UseDebug = useDebug;
-            IsHost = isServer;
-            _useDebug = useDebug;
-            _serverInfo = new ServerInfo{CurrentPlayers = 0, MaxPlayers = maxPlayers, ServerName = "New_Server"};
-        }
 
-        public void Setup(int port, ServerInfo serverInfo, bool useDebug = false)
-        {
-            if(_isRunning) Disconnect();
-            _aPeer = new AHost(port);
-            _aPeer.MaxPlayers = serverInfo.MaxPlayers;
-            _aPeer.UseDebug = useDebug;
-            IsHost = true;
-            _useDebug = useDebug;
-            _serverInfo = serverInfo;
+            if (isServer && serverInfo == null)
+            {
+                serverInfo = new ServerInfo()
+                {
+                    Address = GetLocalIPAddress(),
+                    Port = port,
+                    ServerName = "New_NetServer",
+                    MaxPlayers = 10
+                };
+            }
+            _aPeer.ServerInfo = serverInfo;
+            IsHost = isServer;
+            _aPeer.MaxPlayers = serverInfo?.MaxPlayers ?? 10;
         }
 
         public void Start()
@@ -66,17 +59,17 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
             {
                 _pollingThread.Join();
             }
-            _aPeer.Stop();
-            
             _lanDiscovery?.StopDiscovery();
             _lanBroadcaster?.StopBroadcast();
+            _aPeer.Stop();
+            _lanServers.Clear();
         }
 
         public void Connect(string address)
         {
             if(IsHost)
             {
-                if(_useDebug) Debug.Log("[SERVER] Cannot connect to a client as a server.");
+                DebugQueue.AddMessage("[SERVER] Cannot connect to a client as a server.", DebugQueue.MessageType.Warning);
                 return;
             }
 
@@ -92,7 +85,7 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
         {
             if (!IsHost) 
             {
-                if(_useDebug) Debug.Log("[Client] Client cannot kick other clients.");
+                DebugQueue.AddMessage("[Client] Client cannot kick other clients.", DebugQueue.MessageType.Warning);
                 return;
             }
 
@@ -107,7 +100,7 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
         {
             if (!IsHost) 
             {
-                if(_useDebug) Debug.Log("[Client] Client cannot send data to other clients. Use ITransport.Send instead.");
+                DebugQueue.AddMessage("[Client] Client cannot send data to other clients. Use ITransport.Send instead.", DebugQueue.MessageType.Warning);
                 return;
             }
             _aPeer.SendTo(id, data);
@@ -125,7 +118,16 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
 
         public ConnectionInfo GetConnectionInfo(int clientId)
         {
-            return _aPeer.ConnectionInfo.TryGetValue(clientId, out var info) ? info : null;
+            return _aPeer.ConnectionInfo.TryGetValue(clientId <= 0 ? 0 : clientId, out var info) ? info : null;
+        }
+
+        public void SetConnectionId(int clientId, int connectionId)
+        {
+            if (_aPeer.ConnectionInfo.TryGetValue(clientId <= 0 ? 0 : clientId, out var info))
+            {
+                info.Id = connectionId;
+                _aPeer.ConnectionInfo[clientId] = info;
+            }
         }
 
         public ConnectionState GetConnectionState(int clientId)
@@ -135,25 +137,34 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
 
         public void SetServerInfo(ServerInfo serverInfo)
         {
-            _serverInfo = serverInfo;
-            if (IsHost)
+            if (serverInfo != null)
             {
-                _lanBroadcaster?.UpdateServerInfo(serverInfo);
+                ServerInfo info = _aPeer.ServerInfo;
+                if (serverInfo.Address == null)
+                {
+                    serverInfo.Address = info.Address;
+                    serverInfo.Port = info.Port;
+                }
+                _aPeer.ServerInfo = serverInfo;
+                if (IsHost)
+                {
+                    _lanBroadcaster?.SetServerInfo(_aPeer.ServerInfo);
+                }
             }
         }
         public ServerInfo GetServerInfo()
         {
-            return _serverInfo;
+            return _aPeer.ServerInfo;
         }
         public void UpdateServerInfo(Dictionary<string, string> customData)
         {
             foreach (var kvp in customData)
             {
-                _serverInfo.CustomData[kvp.Key] = kvp.Value;
+                _aPeer.ServerInfo.CustomData[kvp.Key] = kvp.Value;
             }
             if (IsHost)
             {
-                _lanBroadcaster?.UpdateServerInfo(_serverInfo);
+                _lanBroadcaster?.SetServerInfo(_aPeer.ServerInfo);
             }
         }
         
@@ -163,18 +174,30 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
             _aPeer?.SetBandwidthLimit(bytesPerSecond);
         }
 
-        public void StartServerDiscovery(int discoveryPort = -1)
+        public void StartServerDiscovery(float discoveryInterval, int discoveryPort = -1)
         {
             if (!IsHost)
             {
                 _lanServers = new List<ServerInfo>();
                 _lanDiscovery = new LANDiscovery();
-                _lanDiscovery.OnServerFound += address =>
+                _lanDiscovery.OnServerFound += serverInfo =>
                 {
-                    if(_useDebug) Debug.Log($"Found server at {address}");
-                    if(!_lanServers.Contains(address))
-                        _lanServers.Add(address);
-                    TriggerOnLanServerDetected(address);
+                    if(_lanServers.Contains(serverInfo))
+                    {
+                        _lanServers[_lanServers.IndexOf(serverInfo)] = serverInfo;
+                    }
+                    else
+                    {
+                        _lanServers.Add(serverInfo);
+                        DebugQueue.AddMessage($"Found new server at {serverInfo.Address} | {serverInfo.Port}");
+                    }
+                    TriggerOnLanServersUpdate(serverInfo);
+                };
+                _lanDiscovery.OnServerLost += serverInfo =>
+                {
+                    DebugQueue.AddMessage($"Lost server at {serverInfo.Address} | {serverInfo.Port}");
+                    _lanServers.Remove(serverInfo);
+                    TriggerOnLanServersUpdate(serverInfo);
                 };
                 if(discoveryPort == -1) _lanDiscovery.StartDiscovery();
                 else _lanDiscovery.StartDiscovery(discoveryPort);
@@ -186,7 +209,7 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
             {
                 _lanBroadcaster = new LANBroadcast();
                 _lanBroadcaster.StartBroadcast();
-                _lanBroadcaster.BroadcastServerInfo(_serverInfo);
+                _lanBroadcaster.SetServerInfo(_aPeer.ServerInfo);
             }
         }
         public void StopServerDiscovery()
@@ -198,7 +221,18 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
             _lanBroadcaster?.StopBroadcast();
         }
 
-
+        public string GetLocalIPAddress()
+        {
+            var host = Dns.GetHostEntry(Dns.GetHostName());
+            foreach (var ip in host.AddressList)
+            {
+                if (ip.AddressFamily == AddressFamily.InterNetwork)
+                {
+                    return ip.ToString();
+                }
+            }
+            throw new Exception("No network adapters with an IPv4 address in the system!");
+        }
         private void StartThread()
         {
             _pollingThread = new Thread(PollNetwork)

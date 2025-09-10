@@ -1,11 +1,10 @@
+using SimpleNet.Utilities;
 using System.Collections.Generic;
-using System.Net;
 using LiteNetLib;
-using UnityEngine;
 
-namespace Transport.NetPackage.Runtime.Transport.UDP
+namespace SimpleNet.Transport.UDP
 {
-    public class AHost : APeer
+    internal class AHost : APeer
     {
         private int _connected;
         public AHost(int port) : base(port)
@@ -14,13 +13,13 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
 
         public override void Start()
         {
-            if(UseDebug) Debug.Log($"[SERVER] Listening on port {Port}.");
+            DebugQueue.AddMessage($"[SERVER] Listening on port {Port}.");
             Peer.Start(Port);
         }
 
         public override void Connect(string address)
         {
-            if(UseDebug) Debug.Log("[SERVER] Cannot connect to a client as a server.");
+            DebugQueue.AddMessage("[SERVER] Cannot connect to a client as a server.", DebugQueue.MessageType.Warning);
         }
 
         public override void Kick(int id)
@@ -28,7 +27,7 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
             if (Peer.TryGetPeerById(id, out NetPeer peer))
             {
                 peer.Disconnect();
-                if(UseDebug) Debug.Log($"[SERVER] Client {id} kicked.");
+                DebugQueue.AddMessage($"[SERVER] Client {id} kicked.", DebugQueue.MessageType.Warning);
             }
         }
 
@@ -38,29 +37,42 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
             foreach (var peer in peers)
             {
                 if(peer.ConnectionState == LiteNetLib.ConnectionState.Connected)
+                {
+                    if(!_connectionInfo.ContainsKey(peer.Id))
+                        UpdateConnectionInfo(peer.Id, ConnectionState.Connected);
+                    _connectionInfo[peer.Id].BytesSent += data.Length;
                     peer.Send(data, DeliveryMethod.Sequenced);
+                }
             }
-            if(UseDebug) Debug.Log("[SERVER] Sent message to all clients");
+            DebugQueue.AddMessage("[SERVER] Sent message to all clients");
         }
 
         public override void OnConnectionRequest(ConnectionRequest request)
         {
-            if(UseDebug) Debug.Log($"[SERVER] Requested connection from {request.RemoteEndPoint}.");
-            if(_connected < MaxPlayers) request.AcceptIfKey("Net_Key");
-            else if(UseDebug) Debug.Log($"[SERVER] Requested connection denied from {request.RemoteEndPoint}. Max players: {MaxPlayers}");
+            DebugQueue.AddMessage($"[SERVER] Requested connection from {request.RemoteEndPoint}.");
+            if(_connected < MaxPlayers)
+            {
+                request.AcceptIfKey("Net_Key");
+                _connected++;
+            }
+            else
+                DebugQueue.AddMessage($"[SERVER] Requested connection denied from {request.RemoteEndPoint}. Max players: {MaxPlayers}", DebugQueue.MessageType.Warning);
         }
 
 
         public override void OnPeerConnected(NetPeer peer)
         {
-            if(UseDebug) Debug.Log("[SERVER] Client connected: " + peer.Address + "|" + peer.Port + ":" + peer.Id);
+            DebugQueue.AddMessage("[SERVER] Client connected: " + peer.Address + "|" + peer.Port + ":" + peer.Id);
             ITransport.TriggerOnClientConnected(peer.Id);
+            _serverInfo.CurrentPlayers = _connected;
             UpdateConnectionInfo(peer.Id, ConnectionState.Connected, peer.Ping);
         }
         
         public override void OnPeerDisconnected(NetPeer peer, DisconnectInfo disconnectInfo)
         {
-            if(UseDebug) Debug.Log($"Client disconnected. Reason: {disconnectInfo.Reason}");
+            DebugQueue.AddMessage($"Client disconnected. Reason: {disconnectInfo.Reason}", DebugQueue.MessageType.Warning);
+            _connected--;
+            _serverInfo.CurrentPlayers = _connected;
             ITransport.TriggerOnClientDisconnected(peer.Id);
             UpdateConnectionInfo(peer.Id, ConnectionState.Disconnected, peer.Ping);
         }

@@ -5,9 +5,9 @@ using System.Text;
 using System.Threading;
 using UnityEngine;
 
-namespace Transport.NetPackage.Runtime.Transport.UDP
+namespace SimpleNet.Transport.UDP
 {
-    public class LANBroadcast
+    internal class LANBroadcast
     {
         private UdpClient _udpClient;
         private Thread _broadcastThread;
@@ -15,6 +15,7 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
         private const int DiscoveryPort = 8888;
         private const string DiscoveryMessage = "NetPackage_Discovery";
         private ServerInfo _serverInfo;
+        private readonly object _serverInfoLock = new object();
 
         public void StartBroadcast()
         {
@@ -43,15 +44,12 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
             _udpClient?.Close();
             _broadcastThread?.Join();
         }
-
-        public void UpdateServerInfo(ServerInfo serverInfo)
+        public void SetServerInfo(ServerInfo serverInfo)
         {
-            _serverInfo = serverInfo;
-        }
-
-        public void BroadcastServerInfo(ServerInfo serverInfo)
-        {
-            _serverInfo = serverInfo;
+            lock (_serverInfoLock)
+            {
+                _serverInfo = serverInfo;
+            }
         }
 
         private void BroadcastLoop()
@@ -60,9 +58,16 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
             {
                 try
                 {
-                    if (_serverInfo != null)
+                    ServerInfo infoToBroadcast = null;
+                    lock (_serverInfoLock)
                     {
-                        var message = BuildBroadcastMessage();
+                        if (_serverInfo != null)
+                            infoToBroadcast = _serverInfo;
+                    }
+
+                    if (infoToBroadcast != null)
+                    {
+                        var message = BuildBroadcastMessage(infoToBroadcast);
                         var data = Encoding.ASCII.GetBytes(message);
                         _udpClient.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, DiscoveryPort));
                     }
@@ -73,28 +78,34 @@ namespace Transport.NetPackage.Runtime.Transport.UDP
                     if (_isRunning)
                     {
                         Debug.LogError($"Error in broadcast loop: {e.Message}");
+                        _isRunning = false;
+                        return;
                     }
                 }
             }
         }
 
-        private string BuildBroadcastMessage()
+        private string BuildBroadcastMessage(ServerInfo info)
         {
             var message = new StringBuilder();
             message.Append(DiscoveryMessage);
             message.Append("|");
-            message.Append(_serverInfo.ServerName);
+            message.Append(info.ServerName);
             message.Append("|");
-            message.Append(_serverInfo.CurrentPlayers);
+            message.Append(info.CurrentPlayers);
             message.Append("|");
-            message.Append(_serverInfo.MaxPlayers);
+            message.Append(info.MaxPlayers);
             message.Append("|");
-            message.Append(_serverInfo.GameMode);
+            message.Append(info.GameMode);
+            message.Append("|");
+            message.Append(info.Address);
+            message.Append("|");
+            message.Append(info.Port);
 
             // Add custom data
-            if (_serverInfo.CustomData != null)
+            if (info.CustomData != null)
             {
-                foreach (var kvp in _serverInfo.CustomData)
+                foreach (var kvp in info.CustomData)
                 {
                     message.Append("|");
                     message.Append(kvp.Key);

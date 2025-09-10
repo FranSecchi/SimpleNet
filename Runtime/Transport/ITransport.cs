@@ -1,9 +1,10 @@
 using System;
 using System.Collections.Generic;
-using System.Net;
 using JetBrains.Annotations;
+using System.Net;
+using System.Threading.Tasks;
 
-namespace Transport.NetPackage.Runtime.Transport
+namespace SimpleNet.Transport
 {
     public enum TransportType
     {
@@ -20,24 +21,47 @@ namespace Transport.NetPackage.Runtime.Transport
 
     public class ServerInfo
     {
-        public IPEndPoint EndPoint { get; set; }
+        public string Address { get; set; }
+        public int Port { get; set; }
         public string ServerName { get; set; }
         public int CurrentPlayers { get; set; }
         public int MaxPlayers { get; set; }
         public string GameMode { get; set; }
         public int Ping { get; set; }
         public Dictionary<string, string> CustomData { get; set; }
+
+        public override bool Equals(object obj)
+        {
+            if (obj is ServerInfo other)
+            {
+                return Address.Equals(other.Address) && Port.Equals(other.Port);
+            }
+            return false;
+        }
+
+        public override string ToString()
+        {
+            return $"{ServerName} ({Address}:{Port}) - Players: {CurrentPlayers}/{MaxPlayers} - Mode: {GameMode} - Ping: {Ping}ms";
+        }
     }
 
     public class ConnectionInfo
     {
+        public int Id { get; set; }
         public ConnectionState State { get; set; }
-        public IPEndPoint RemoteEndPoint { get; set; }
         public int Ping { get; set; }
         public int BytesReceived { get; set; }
         public int BytesSent { get; set; }
         public DateTime ConnectedSince { get; set; }
         public float PacketLoss { get; set; }
+
+        public override string ToString()
+        {
+            var duration = DateTime.Now - ConnectedSince;
+            return $"Connection[Id={Id}, State={State}, " +
+                   $"Ping={Ping}ms, Bytes[Rx={BytesReceived}, Tx={BytesSent}], " +
+                   $"Connected={duration.TotalSeconds:F1}s, PacketLoss={PacketLoss:P2}]";
+        }
     }
 
     public interface ITransport
@@ -60,7 +84,7 @@ namespace Transport.NetPackage.Runtime.Transport
         /// <summary>
         /// Event triggered when a new LAN server is discovered
         /// </summary>
-        [CanBeNull] static event Action<ServerInfo> OnLanServerDiscovered;
+        [CanBeNull] static event Action<ServerInfo> OnLanServerUpdate;
         
         /// <summary>
         /// Event triggered when the connection state changes
@@ -72,10 +96,9 @@ namespace Transport.NetPackage.Runtime.Transport
         /// </summary>
         /// <param name="port">The port to use for communication</param>
         /// <param name="isServer">Whether this instance should act as a server</param>
-        /// <param name="maxPlayers">Number of maximum connections on server</param>
+        /// <param name="serverInfo">The server's information. If client, this is not used</param>
         /// <param name="useDebug">Whether to enable debug logging</param>
-        void Setup(int port, bool isServer, int maxPlayers = 10, bool useDebug = false);
-        void Setup(int port, ServerInfo serverInfo, bool useDebug = false);
+        void Setup(int port, bool isServer, ServerInfo serverInfo = null);
 
         /// <summary>
         /// Starts the transport service
@@ -135,7 +158,7 @@ namespace Transport.NetPackage.Runtime.Transport
         /// <param name="clientId">The ID of the client</param>
         /// <returns>Connection information for the specified client</returns>
         ConnectionInfo GetConnectionInfo(int clientId);
-
+        void SetConnectionId(int clientId, int connectionId);
         /// <summary>
         /// Gets the current connection state for a specific client
         /// </summary>
@@ -166,12 +189,13 @@ namespace Transport.NetPackage.Runtime.Transport
         /// </summary>
         /// <param name="bytesPerSecond">The maximum number of bytes per second</param>
         void SetBandwidthLimit(int bytesPerSecond);
-        
+
         /// <summary>
         /// Starts the server discovery process
         /// </summary>
+        /// <param name="discoveryInterval"></param>
         /// <param name="discoveryPort">The port to use for discovery, or -1 to use the default</param>
-        void StartServerDiscovery(int discoveryPort = -1);
+        void StartServerDiscovery(float discoveryInterval, int discoveryPort = -1);
 
         /// <summary>
         /// Stops the server discovery process
@@ -219,9 +243,9 @@ namespace Transport.NetPackage.Runtime.Transport
         /// Triggers the OnLanServerDiscovered event
         /// </summary>
         /// <param name="serverInfo">Information about the discovered server</param>
-        static void TriggerOnLanServerDetected(ServerInfo serverInfo)
+        static void TriggerOnLanServersUpdate(ServerInfo serverInfo)
         {
-            OnLanServerDiscovered?.Invoke(serverInfo);
+            OnLanServerUpdate?.Invoke(serverInfo);
         }
 
         /// <summary>
@@ -232,5 +256,7 @@ namespace Transport.NetPackage.Runtime.Transport
         {
             OnConnectionStateChanged?.Invoke(connectionInfo);
         }
+
+        string GetLocalIPAddress();
     }
 }
